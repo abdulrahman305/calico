@@ -14,7 +14,7 @@ DOCKER_RUN := mkdir -p ./.go-pkg-cache bin $(GOMOD_CACHE) && \
 		-e GOPATH=/go \
 		-e OS=$(BUILDOS) \
 		-e GOOS=$(BUILDOS) \
-		-e GOFLAGS=$(GOFLAGS) \
+		-e "GOFLAGS=$(GOFLAGS)" \
 		-v $(CURDIR):/go/src/github.com/projectcalico/calico:rw \
 		-v $(CURDIR)/.go-pkg-cache:/go-cache:rw \
 		-w /go/src/$(PACKAGE_NAME)
@@ -95,12 +95,14 @@ protobuf:
 
 generate:
 	$(MAKE) gen-semaphore-yaml
+	$(MAKE) gen-deps-files
 	$(MAKE) protobuf
 	$(MAKE) -C lib gen-files
 	$(MAKE) -C api gen-files
 	$(MAKE) -C libcalico-go gen-files
 	$(MAKE) -C felix gen-files
 	$(MAKE) -C goldmane gen-files
+	$(MAKE) get-operator-crds
 	$(MAKE) gen-manifests
 	$(MAKE) fix-changed
 
@@ -121,6 +123,22 @@ get-operator-crds: var-require-all-OPERATOR_BRANCH
 
 gen-semaphore-yaml:
 	$(DOCKER_GO_BUILD) sh -c "cd .semaphore && ./generate-semaphore-yaml.sh"
+
+GO_DIRS=$(shell find -name '*.go' | grep -v -e './lib/' -e './pkg/' | grep -o --perl '^./\K[^/]+' | sort -u)
+DEP_FILES=$(patsubst %, %/deps.txt, $(GO_DIRS))
+
+gen-deps-files:
+	$(MAKE) -j $(DEP_FILES)
+
+$(DEP_FILES): go.mod go.sum $(shell find . -name '*.go') Makefile hack/cmd/deps/*
+	@{ \
+	  echo "!!! GENERATED FILE, DO NOT EDIT !!!" && \
+	  echo "This file contains the list of modules that this package depends on" && \
+	  echo "in order to trigger CI on changes" && \
+	  echo && \
+	  grep '^go' go.mod && \
+	  $(DOCKER_GO_BUILD) sh -c "go run ./hack/cmd/deps modules $(dir $@)"; \
+	} > $@
 
 # Build the tigera-operator helm chart.
 chart: bin/tigera-operator-$(GIT_VERSION).tgz

@@ -31,6 +31,7 @@ import (
 	apiv3 "github.com/projectcalico/api/pkg/apis/projectcalico/v3"
 	"github.com/sirupsen/logrus"
 
+	"github.com/projectcalico/calico/felix/bpf/qos"
 	"github.com/projectcalico/calico/felix/fv/connectivity"
 	"github.com/projectcalico/calico/felix/fv/infrastructure"
 	"github.com/projectcalico/calico/felix/fv/workload"
@@ -166,20 +167,35 @@ type iperfReport struct {
 }
 
 var _ = infrastructure.DatastoreDescribe(
-	"QoS controls tests",
+	"_BPF_ _BPF-SAFE_ QoS controls tests",
 	[]apiconfig.DatastoreType{apiconfig.Kubernetes, apiconfig.EtcdV3},
 	func(getInfra infrastructure.InfraFactory) {
 		type testConf struct {
-			Encap string
+			Encap       string
+			BPFLogLevel string
 		}
 		for _, testConfig := range []testConf{
-			{Encap: "none"},
-			{Encap: "ipip"},
-			{Encap: "vxlan"},
+			{
+				Encap:       "none",
+				BPFLogLevel: "Debug",
+			},
+			{
+				Encap:       "none",
+				BPFLogLevel: "Info",
+			},
+			{
+				Encap:       "ipip",
+				BPFLogLevel: "Debug",
+			},
+			{
+				Encap:       "vxlan",
+				BPFLogLevel: "Debug",
+			},
 		} {
 			encap := testConfig.Encap
+			bpfLogLevel := testConfig.BPFLogLevel
 
-			Describe(fmt.Sprintf("encap='%s'", encap), func() {
+			Describe(fmt.Sprintf("encap='%s', bpfLogLevel='%s'", encap, bpfLogLevel), func() {
 				var (
 					infra        infrastructure.DatastoreInfra
 					tc           infrastructure.TopologyContainers
@@ -192,6 +208,10 @@ var _ = infrastructure.DatastoreDescribe(
 				BeforeEach(func() {
 					infra = getInfra()
 					topt = infrastructure.DefaultTopologyOptions()
+
+					if bpfLogLevel != "Debug" && !BPFMode() {
+						Skip("Skipping QoS control tests with non-debug bpfLogLevel on iptables/nftables mode (for deduplication).")
+					}
 
 					switch encap {
 					case "none":
@@ -217,6 +237,9 @@ var _ = infrastructure.DatastoreDescribe(
 					topt.UseIPPools = true
 					topt.DelayFelixStart = true
 					topt.TriggerDelayedFelixStart = true
+					if BPFMode() {
+						topt.ExtraEnvVars["FELIX_BPFLogLevel"] = bpfLogLevel
+					}
 
 					if _, ok := infra.(*infrastructure.EtcdDatastoreInfra); ok && BPFMode() {
 						Skip("Skipping QoS control tests on etcd datastore and BPF mode.")
@@ -289,34 +312,34 @@ var _ = infrastructure.DatastoreDescribe(
 
 				getBPFPacketRateAndBurst := func(felixId, wlId int, hook string) func() string {
 					return func() string {
-						var args []string
-						var out string
-
-						args = []string{"bash", "-c", fmt.Sprintf(`bpftool -j net |jq '.[].tc[] | select(.devname == "%s" and .kind == "tcx/%s") | .prog_id'`, w[wlId].InterfaceName, hook)}
-						out, _ = tc.Felixes[felixId].ExecOutput(args...)
-						logrus.Infof("%s output:\n%v", strings.Join(args, " "), out)
-						progId := strings.TrimSuffix(out, "\n")
-						if progId == "null" {
-							return ""
+						var ingress uint32
+						switch hook {
+						case "ingress":
+							ingress = 1
+						case "egress":
+							ingress = 0
+						default:
+							Expect(true).To(BeFalse(), "hook must be either 'ingress' or 'egress', '%s' is invalid", hook)
 						}
 
-						args = []string{"bash", "-c", fmt.Sprintf(`for map_id in $(bpftool prog show id %s -j |jq '.map_ids[]'); do bpftool map dump id ${map_id} -j |jq '.[].formatted.value.".rodata"[]?."__globals".v4 | ."%s_packet_rate"? '; done`, progId, hook)}
-						out, _ = tc.Felixes[felixId].ExecOutput(args...)
-						logrus.Infof("%s output:\n%v", strings.Join(args, " "), out)
-						packetRate := strings.TrimSuffix(out, "\n")
-						if packetRate == "null" {
-							return ""
-						}
+						key := qos.NewKey(uint32(w[wlId].InterfaceIndex()), ingress)
+						keyStr := bytesToHexString(key.AsBytes())
 
-						args = []string{"bash", "-c", fmt.Sprintf(`for map_id in $(bpftool prog show id %s -j |jq '.map_ids[]'); do bpftool map dump id ${map_id} -j |jq '.[].formatted.value.".rodata"[]?."__globals".v4 | ."%s_packet_burst"? '; done`, progId, hook)}
-						out, _ = tc.Felixes[felixId].ExecOutput(args...)
-						logrus.Infof("%s output:\n%v", strings.Join(args, " "), out)
-						packetBurst := strings.TrimSuffix(out, "\n")
-						if packetBurst == "null" {
-							return ""
-						}
+						args := []string{"bash", "-c", fmt.Sprintf(`bpftool map dump name cali_qos -j | jq '.[].elements[] | select(.key | join(" ") == "%s") | .value | join(" ")'`, keyStr)}
 
-						return packetRate + " " + packetBurst
+						out, _ := tc.Felixes[felixId].ExecOutput(args...)
+						logrus.Infof("%s output:\n%v", strings.Join(args, " "), out)
+						valueStr := strings.Trim(strings.TrimSuffix(out, "\n"), "\"")
+						if valueStr == "" {
+							return "0 0"
+						}
+						valueBytes := hexStringToBytes(valueStr)
+
+						value := qos.ValueFromBytes(valueBytes)
+
+						logrus.Infof("value: %s", value.String())
+
+						return fmt.Sprintf("%d %d", value.PacketRate(), value.PacketBurst())
 					}
 				}
 
@@ -872,4 +895,23 @@ func retryIperf2Client(w *workload.Workload, retryNum int, retryInterval time.Du
 	}
 
 	return rate, nil
+}
+
+func hexStringToBytes(s string) []byte {
+	parts := strings.Fields(s)
+	bytes := make([]byte, len(parts))
+	for i, part := range parts {
+		val, err := strconv.ParseUint(strings.Replace(part, "0x", "", 1), 16, 8)
+		Expect(err).NotTo(HaveOccurred())
+		bytes[i] = byte(val)
+	}
+	return bytes
+}
+
+func bytesToHexString(bytes []byte) string {
+	str := []string{}
+	for i := range bytes {
+		str = append(str, fmt.Sprintf("0x%02x", bytes[i]))
+	}
+	return strings.Join(str, " ")
 }

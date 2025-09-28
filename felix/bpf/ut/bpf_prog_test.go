@@ -54,6 +54,7 @@ import (
 	"github.com/projectcalico/calico/felix/bpf/perf"
 	"github.com/projectcalico/calico/felix/bpf/polprog"
 	"github.com/projectcalico/calico/felix/bpf/profiling"
+	"github.com/projectcalico/calico/felix/bpf/qos"
 	"github.com/projectcalico/calico/felix/bpf/routes"
 	"github.com/projectcalico/calico/felix/bpf/state"
 	tcdefs "github.com/projectcalico/calico/felix/bpf/tc/defs"
@@ -309,6 +310,7 @@ func setupAndRun(logger testLogger, loglevel, section string, rules *polprog.Rul
 		logLevel:  log.DebugLevel,
 		psnaStart: 20000,
 		psnatEnd:  30000,
+		dscp:      -1,
 	}
 
 	for _, o := range opts {
@@ -500,10 +502,7 @@ func caller(skip int) string {
 // runBpfTest runs a specific section of the entire bpf program in isolation
 func runBpfTest(t *testing.T, section string, rules *polprog.Rules, testFn func(bpfProgRunFn), opts ...testOption) {
 	RegisterTestingT(t)
-	xdp := false
-	if strings.Contains(section, "xdp") {
-		xdp = true
-	}
+	xdp := strings.Contains(section, "xdp")
 
 	ctxIn := make([]byte, 18*4)
 	binary.LittleEndian.PutUint32(ctxIn[2*4:3*4], skbMark)
@@ -586,7 +585,8 @@ var (
 	natMapV6, natBEMapV6, ctMapV6, ctCleanupMapV6, rtMapV6, ipsMapV6, affinityMapV6, arpMapV6, fsafeMapV6         maps.Map
 	stateMap, countersMap, ifstateMap, progMap, progMapXDP, policyJumpMap, policyJumpMapXDP                       maps.Map
 	perfMap                                                                                                       maps.Map
-	profilingMap, ipfragsMapTmp                                                                                   maps.Map
+	profilingMap, ipfragsMapTmp, ctlbProgsMap                                                                     maps.Map
+	qosMap                                                                                                        maps.Map
 	allMaps                                                                                                       []maps.Map
 )
 
@@ -619,13 +619,15 @@ func initMapsOnce() {
 		policyJumpMap = jump.Map()
 		policyJumpMapXDP = jump.XDPMap()
 		profilingMap = profiling.Map()
+		ctlbProgsMap = nat.ProgramsMap()
+		qosMap = qos.Map()
 
 		perfMap = perf.Map("perf_evnt", 512)
 
 		allMaps = []maps.Map{natMap, natBEMap, natMapV6, natBEMapV6, ctMap, ctMapV6, ctCleanupMap, ctCleanupMapV6, rtMap, rtMapV6, ipsMap, ipsMapV6,
 			stateMap, testStateMap, affinityMap, affinityMapV6, arpMap, arpMapV6, fsafeMap, fsafeMapV6,
 			countersMap, ipfragsMap, ipfragsMapTmp, ifstateMap, profilingMap,
-			policyJumpMap, policyJumpMapXDP}
+			policyJumpMap, policyJumpMapXDP, ctlbProgsMap, qosMap}
 		for _, m := range allMaps {
 			err := m.EnsureExists()
 			if err != nil {
@@ -794,14 +796,17 @@ func objLoad(fname, bpfFsDir, ipFamily string, topts testOpts, polProg, hasHostC
 					globals.Flags |= libbpf.GlobalsNATOutgoingExcludeHosts
 				}
 
-				if topts.ingressQoSPacketRate > 0 {
-					globals.IngressPacketRate = topts.ingressQoSPacketRate
-					globals.IngressPacketBurst = topts.ingressQoSPacketBurst
+				if topts.ingressQoSPacketRate {
+					globals.Flags |= libbpf.GlobalsIngressPacketRateConfigured
 				}
 
-				if topts.egressQoSPacketRate > 0 {
-					globals.EgressPacketRate = topts.egressQoSPacketRate
-					globals.EgressPacketBurst = topts.egressQoSPacketBurst
+				if topts.egressQoSPacketRate {
+					globals.Flags |= libbpf.GlobalsEgressPacketRateConfigured
+				}
+
+				globals.DSCP = -1
+				if topts.dscp >= 0 {
+					globals.DSCP = topts.dscp
 				}
 
 				if topts.ipv6 {
@@ -1156,23 +1161,22 @@ func runBpfUnitTest(t *testing.T, source string, testFn func(bpfProgRunFn), opts
 }
 
 type testOpts struct {
-	description           string
-	subtests              bool
-	logLevel              log.Level
-	xdp                   bool
-	psnaStart             uint32
-	psnatEnd              uint32
-	hostNetworked         bool
-	fromHost              bool
-	progLog               string
-	ipv6                  bool
-	objname               string
-	flowLogsEnabled       bool
-	natOutExcludeHosts    bool
-	ingressQoSPacketRate  uint16
-	ingressQoSPacketBurst uint16
-	egressQoSPacketRate   uint16
-	egressQoSPacketBurst  uint16
+	description          string
+	subtests             bool
+	logLevel             log.Level
+	xdp                  bool
+	psnaStart            uint32
+	psnatEnd             uint32
+	hostNetworked        bool
+	fromHost             bool
+	progLog              string
+	ipv6                 bool
+	objname              string
+	flowLogsEnabled      bool
+	natOutExcludeHosts   bool
+	ingressQoSPacketRate bool
+	egressQoSPacketRate  bool
+	dscp                 int8
 }
 
 type testOption func(opts *testOpts)
@@ -1234,17 +1238,21 @@ func withNATOutExcludeHosts() testOption {
 	}
 }
 
-func withIngressQoSPacketRate(packetRate, packetBurst uint16) testOption {
+func withIngressQoSPacketRate() testOption {
 	return func(o *testOpts) {
-		o.ingressQoSPacketRate = packetRate
-		o.ingressQoSPacketBurst = packetBurst
+		o.ingressQoSPacketRate = true
 	}
 }
 
-func withEgressQoSPacketRate(packetRate, packetBurst uint16) testOption {
+func withEgressQoSPacketRate() testOption {
 	return func(o *testOpts) {
-		o.egressQoSPacketRate = packetRate
-		o.egressQoSPacketBurst = packetBurst
+		o.egressQoSPacketRate = true
+	}
+}
+
+func withEgressDSCP(value int8) testOption {
+	return func(o *testOpts) {
+		o.dscp = value
 	}
 }
 
@@ -1470,6 +1478,10 @@ func resetRTMap(rtMap maps.Map) {
 
 func resetRTMapV6(rtMap maps.Map) {
 	resetMap(rtMap)
+}
+
+func resetQoSMap(qosMap maps.Map) {
+	resetMap(qosMap)
 }
 
 func saveRTMap(rtMap maps.Map) routes.MapMem {
@@ -1937,6 +1949,7 @@ func resetBPFMaps() {
 	resetMap(fsafeMap)
 	resetMap(natMap)
 	resetMap(natBEMap)
+	resetMap(qosMap)
 }
 
 func TestMapIterWithDelete(t *testing.T) {

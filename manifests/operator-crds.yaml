@@ -10033,6 +10033,21 @@ spec:
                         - Enabled
                         - Disabled
                       type: string
+                    bpfNetworkBootstrap:
+                      description: |-
+                        BPFNetworkBootstrap manages the initial networking setup required to configure the BPF dataplane.
+                        When enabled, the operator tries to bootstraps access to the Kubernetes API Server
+                        by using the Kubernetes service and its associated endpoints.
+                        This field should be enabled only if linuxDataplane is set to "BPF".
+                        If another dataplane is selected, this field must be omitted or explicitly set to Disabled.
+                        When disabled and linuxDataplane is BPF, you must manually provide the Kubernetes API Server
+                        information via the "kubernetes-service-endpoint" ConfigMap. It is invalid to use both the ConfigMap
+                        and have this field set to true at the same time.
+                        Default: Disabled
+                      enum:
+                        - Disabled
+                        - Enabled
+                      type: string
                     containerIPForwarding:
                       description: |-
                         ContainerIPForwarding configures whether ip forwarding will be enabled for containers in the CNI configuration.
@@ -10129,6 +10144,16 @@ spec:
                         type: object
                       maxItems: 25
                       type: array
+                    kubeProxyManagement:
+                      description: |-
+                        KubeProxyManagement controls whether the operator manages the kube-proxy DaemonSet.
+                        When enabled, the operator will manage the DaemonSet by patching it:
+                        it disables kube-proxy if the dataplane is BPF, or enables it otherwise.
+                        Default: Disabled
+                      enum:
+                        - Disabled
+                        - Enabled
+                      type: string
                     linuxDataplane:
                       description: |-
                         LinuxDataplane is used to select the dataplane used for Linux nodes. In particular, it
@@ -11413,6 +11438,65 @@ spec:
                                       - name
                                     type: object
                                   type: array
+                                dnsConfig:
+                                  description:
+                                    DNSConfig allows customization of the
+                                    DNS configuration for the calico-node pods.
+                                  properties:
+                                    nameservers:
+                                      description: |-
+                                        A list of DNS name server IP addresses.
+                                        This will be appended to the base nameservers generated from DNSPolicy.
+                                        Duplicated nameservers will be removed.
+                                      items:
+                                        type: string
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                    options:
+                                      description: |-
+                                        A list of DNS resolver options.
+                                        This will be merged with the base options generated from DNSPolicy.
+                                        Duplicated entries will be removed. Resolution options given in Options
+                                        will override those that appear in the base DNSPolicy.
+                                      items:
+                                        description:
+                                          PodDNSConfigOption defines DNS
+                                          resolver options of a pod.
+                                        properties:
+                                          name:
+                                            description: |-
+                                              Name is this DNS resolver option's name.
+                                              Required.
+                                            type: string
+                                          value:
+                                            description:
+                                              Value is this DNS resolver
+                                              option's value.
+                                            type: string
+                                        type: object
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                    searches:
+                                      description: |-
+                                        A list of DNS search domains for host-name lookup.
+                                        This will be appended to the base search paths generated from DNSPolicy.
+                                        Duplicated search paths will be removed.
+                                      items:
+                                        type: string
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                  type: object
+                                dnsPolicy:
+                                  description:
+                                    DNSPolicy is the DNS policy for the calico-node
+                                    pods.
+                                  enum:
+                                    - ""
+                                    - Default
+                                    - ClusterFirst
+                                    - ClusterFirstWithHostNet
+                                    - None
+                                  type: string
                                 initContainers:
                                   description: |-
                                     InitContainers is a list of calico-node init containers.
@@ -15575,6 +15659,7 @@ spec:
                     - DockerEnterprise
                     - RKE2
                     - TKG
+                    - Kind
                   type: string
                 logging:
                   description: Logging Configuration for Components
@@ -18803,6 +18888,21 @@ spec:
                             - Enabled
                             - Disabled
                           type: string
+                        bpfNetworkBootstrap:
+                          description: |-
+                            BPFNetworkBootstrap manages the initial networking setup required to configure the BPF dataplane.
+                            When enabled, the operator tries to bootstraps access to the Kubernetes API Server
+                            by using the Kubernetes service and its associated endpoints.
+                            This field should be enabled only if linuxDataplane is set to "BPF".
+                            If another dataplane is selected, this field must be omitted or explicitly set to Disabled.
+                            When disabled and linuxDataplane is BPF, you must manually provide the Kubernetes API Server
+                            information via the "kubernetes-service-endpoint" ConfigMap. It is invalid to use both the ConfigMap
+                            and have this field set to true at the same time.
+                            Default: Disabled
+                          enum:
+                            - Disabled
+                            - Enabled
+                          type: string
                         containerIPForwarding:
                           description: |-
                             ContainerIPForwarding configures whether ip forwarding will be enabled for containers in the CNI configuration.
@@ -18899,6 +18999,16 @@ spec:
                             type: object
                           maxItems: 25
                           type: array
+                        kubeProxyManagement:
+                          description: |-
+                            KubeProxyManagement controls whether the operator manages the kube-proxy DaemonSet.
+                            When enabled, the operator will manage the DaemonSet by patching it:
+                            it disables kube-proxy if the dataplane is BPF, or enables it otherwise.
+                            Default: Disabled
+                          enum:
+                            - Disabled
+                            - Enabled
+                          type: string
                         linuxDataplane:
                           description: |-
                             LinuxDataplane is used to select the dataplane used for Linux nodes. In particular, it
@@ -20210,6 +20320,65 @@ spec:
                                           - name
                                         type: object
                                       type: array
+                                    dnsConfig:
+                                      description:
+                                        DNSConfig allows customization of
+                                        the DNS configuration for the calico-node pods.
+                                      properties:
+                                        nameservers:
+                                          description: |-
+                                            A list of DNS name server IP addresses.
+                                            This will be appended to the base nameservers generated from DNSPolicy.
+                                            Duplicated nameservers will be removed.
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
+                                        options:
+                                          description: |-
+                                            A list of DNS resolver options.
+                                            This will be merged with the base options generated from DNSPolicy.
+                                            Duplicated entries will be removed. Resolution options given in Options
+                                            will override those that appear in the base DNSPolicy.
+                                          items:
+                                            description:
+                                              PodDNSConfigOption defines
+                                              DNS resolver options of a pod.
+                                            properties:
+                                              name:
+                                                description: |-
+                                                  Name is this DNS resolver option's name.
+                                                  Required.
+                                                type: string
+                                              value:
+                                                description:
+                                                  Value is this DNS resolver
+                                                  option's value.
+                                                type: string
+                                            type: object
+                                          type: array
+                                          x-kubernetes-list-type: atomic
+                                        searches:
+                                          description: |-
+                                            A list of DNS search domains for host-name lookup.
+                                            This will be appended to the base search paths generated from DNSPolicy.
+                                            Duplicated search paths will be removed.
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
+                                      type: object
+                                    dnsPolicy:
+                                      description:
+                                        DNSPolicy is the DNS policy for the
+                                        calico-node pods.
+                                      enum:
+                                        - ""
+                                        - Default
+                                        - ClusterFirst
+                                        - ClusterFirstWithHostNet
+                                        - None
+                                      type: string
                                     initContainers:
                                       description: |-
                                         InitContainers is a list of calico-node init containers.
@@ -24448,6 +24617,7 @@ spec:
                         - DockerEnterprise
                         - RKE2
                         - TKG
+                        - Kind
                       type: string
                     logging:
                       description: Logging Configuration for Components
@@ -26745,6 +26915,38 @@ spec:
                           type: object
                       type: object
                   type: object
+                impersonation:
+                  description: |-
+                    Impersonation configures the RBAC impersonation permissions for the guardian deployment. This field is not
+                    applicable to installation variant Calico as no impersonation is ever used. Otherwise, if this field is left nil,
+                    a default set of permissions will be applied.
+                    WARNING: If this field is specified, it completely replaces the default permissions.
+                    For example, providing an empty `impersonation: {}` block will result in guardian
+                    having NO impersonation permissions. Similarly, if you specify `users` but omit `groups`,
+                    guardian will lose its default permissions to impersonate groups.
+                  properties:
+                    groups:
+                      description: |-
+                        Groups is a list of group names that can be impersonated. An empty list infers all groups can be impersonated,
+                        a null values means none.
+                      items:
+                        type: string
+                      type: array
+                    serviceAccounts:
+                      description: |-
+                        ServiceAccounts is a list of service account names that can be impersonated. An empty list infers all service accounts can
+                        be impersonated, a null values means none.
+                      items:
+                        type: string
+                      type: array
+                    users:
+                      description: |-
+                        Users is a list of users that can be impersonated. An empty list infers all users can be impersonated, a null
+                        value means none.
+                      items:
+                        type: string
+                      type: array
+                  type: object
                 managementClusterAddr:
                   description: |-
                     Specify where the managed cluster can reach the management cluster. Ex.: "10.128.0.10:30449". A managed cluster
@@ -28499,7 +28701,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: bgpconfigurations.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -28620,7 +28822,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: bgpfilters.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -28774,7 +28976,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: bgppeers.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -28807,6 +29009,8 @@ spec:
                   type: array
                 keepOriginalNextHop:
                   type: boolean
+                keepaliveTime:
+                  type: string
                 localASNumber:
                   format: int32
                   type: integer
@@ -28873,7 +29077,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: blockaffinities.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -28922,7 +29126,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: caliconodestatuses.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -29086,7 +29290,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: clusterinformations.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -29130,7 +29334,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: felixconfigurations.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -29412,12 +29616,30 @@ spec:
                     - Enabled
                     - Disabled
                   type: string
+                bpfJITHardening:
+                  allOf:
+                    - enum:
+                        - Auto
+                        - Strict
+                    - enum:
+                        - Auto
+                        - Strict
+                  description: |-
+                    BPFJITHardening controls BPF JIT hardening. When set to "Auto", Felix will set JIT hardening to 1
+                    if it detects the current value is 2 (strict mode that hurts performance). When set to "Strict",
+                    Felix will not modify the JIT hardening setting. [Default: Auto]
+                  type: string
                 bpfKubeProxyEndpointSlicesEnabled:
                   description: |-
                     BPFKubeProxyEndpointSlicesEnabled is deprecated and has no effect. BPF
                     kube-proxy always accepts endpoint slices. This option will be removed in
                     the next release.
                   type: boolean
+                bpfKubeProxyHealtzPort:
+                  description: |-
+                    BPFKubeProxyHealtzPort, in BPF mode, controls the port that Felix's embedded kube-proxy health check server binds to.
+                    The health check server is used by external load balancers to determine if this node should receive traffic.  [Default: 10256]
+                  type: integer
                 bpfKubeProxyIptablesCleanupEnabled:
                   description: |-
                     BPFKubeProxyIptablesCleanupEnabled, if enabled in BPF mode, Felix will proactively clean up the upstream
@@ -30155,6 +30377,21 @@ spec:
                     PrometheusGoMetricsEnabled disables Go runtime metrics collection, which the Prometheus client does by default, when
                     set to false. This reduces the number of metrics reported, reducing Prometheus load. [Default: true]
                   type: boolean
+                prometheusMetricsCAFile:
+                  description: |-
+                    PrometheusMetricsCAFile defines the absolute path to the TLS CA certificate file used for securing the /metrics endpoint.
+                    This certificate must be valid and accessible by the calico-node process.
+                  type: string
+                prometheusMetricsCertFile:
+                  description: |-
+                    PrometheusMetricsCertFile defines the absolute path to the TLS certificate file used for securing the /metrics endpoint.
+                    This certificate must be valid and accessible by the calico-node process.
+                  type: string
+                prometheusMetricsClientAuth:
+                  description: |-
+                    PrometheusMetricsClientAuth specifies the client authentication type for the /metrics endpoint.
+                    This determines how the server validates client certificates. Default is "RequireAndVerifyClientCert".
+                  type: string
                 prometheusMetricsEnabled:
                   description:
                     "PrometheusMetricsEnabled enables the Prometheus metrics
@@ -30164,6 +30401,11 @@ spec:
                   description:
                     "PrometheusMetricsHost is the host that the Prometheus
                     metrics server should bind to. [Default: empty]"
+                  type: string
+                prometheusMetricsKeyFile:
+                  description: |-
+                    PrometheusMetricsKeyFile defines the absolute path to the private key file corresponding to the TLS certificate
+                    used for securing the /metrics endpoint. The private key must be valid and accessible by the calico-node process.
                   type: string
                 prometheusMetricsPort:
                   description:
@@ -30416,7 +30658,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: globalnetworkpolicies.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -30790,7 +31032,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: globalnetworksets.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -30828,7 +31070,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: hostendpoints.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -30893,7 +31135,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: ipamblocks.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -30972,7 +31214,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: ipamconfigs.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -31017,7 +31259,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: ipamhandles.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -31062,7 +31304,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: ippools.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -31112,6 +31354,8 @@ spec:
                   type: object
                 ipipMode:
                   type: string
+                namespaceSelector:
+                  type: string
                 nat-outgoing:
                   type: boolean
                 natOutgoing:
@@ -31132,7 +31376,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: ipreservations.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -31170,7 +31414,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: kubecontrollersconfigurations.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -31368,7 +31612,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: networkpolicies.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -31734,7 +31978,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: networksets.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -31772,7 +32016,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: stagedglobalnetworkpolicies.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -32148,7 +32392,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: stagedkubernetesnetworkpolicies.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -32396,7 +32640,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: stagednetworkpolicies.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
@@ -32764,7 +33008,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.3
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: tiers.crd.projectcalico.org
 spec:
   group: crd.projectcalico.org
