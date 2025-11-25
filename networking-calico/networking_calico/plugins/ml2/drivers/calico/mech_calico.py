@@ -40,7 +40,6 @@ from keystoneauth1.identity import v3
 
 from keystoneclient.v3.client import Client as KeystoneClient
 
-import neutron.plugins.ml2.rpc as rpc
 from neutron.agent import rpc as agent_rpc
 from neutron.conf.agent import common as config
 from neutron.objects import ports as ports_object
@@ -440,6 +439,8 @@ class CalicoMechanismDriver(mech_agent.SimpleAgentMechanismDriverBase):
             # above is complete before we start running.
             self._epoch += 1
             eventlet.spawn(self.periodic_resync_thread, self._epoch)
+            if cfg.CONF.calico.etcd_compaction_period_mins > 0:
+                eventlet.spawn(self.periodic_compaction_thread, self._epoch)
             eventlet.spawn(self._status_updating_thread, self._epoch)
             for _ in range(cfg.CONF.calico.num_port_status_threads):
                 eventlet.spawn(self._loop_writing_port_statuses, self._epoch)
@@ -1005,7 +1006,7 @@ class CalicoMechanismDriver(mech_agent.SimpleAgentMechanismDriverBase):
         self.endpoint_syncer.delete_endpoint(port)
 
     @requires_state
-    def send_sg_updates(self, sgids, context):
+    def security_groups_rule_updated(self, context):
         """Called whenever security group rules or membership change.
 
         When a security group rule is added, we need to do the following steps:
@@ -1013,10 +1014,10 @@ class CalicoMechanismDriver(mech_agent.SimpleAgentMechanismDriverBase):
         1. Reread the security rules from the Neutron DB.
         2. Write the updated policy to etcd.
         """
-        TrackTask("SEND_SG_UPDATES")
-        LOG.info("Updating security group IDs %s", sgids)
-        with self._txn_from_context(context, tag="sg-update"):
-            self.policy_syncer.write_sgs_to_etcd(sgids, context)
+        TrackTask("SECURITY_GROUPS_RULE_UPDATED")
+        LOG.info("SECURITY_GROUPS_RULE_UPDATED: %s", context)
+        with self._txn_from_context(context.plugin_context, tag="sg-update"):
+            self.policy_syncer.write_sgs_to_etcd(context.sgids, context.plugin_context)
 
     @contextlib.contextmanager
     def _txn_from_context(self, context, tag="<unset>"):
@@ -1102,9 +1103,6 @@ class CalicoMechanismDriver(mech_agent.SimpleAgentMechanismDriverBase):
 
                         # Resync ClusterInformation and FelixConfiguration.
                         self.provide_felix_config()
-
-                        # Possibly request an etcd compaction.
-                        check_request_etcd_compaction()
                     except Exception:
                         LOG.exception("Error in periodic resync thread.")
 
@@ -1129,6 +1127,44 @@ class CalicoMechanismDriver(mech_agent.SimpleAgentMechanismDriverBase):
             raise
         else:
             LOG.warning("Periodic resync thread exiting.")
+
+    def periodic_compaction_thread(self, launch_epoch):
+        """Periodic etcd compaction logic.
+
+        On a fixed interval, requests etcd compaction to prevent unbounded disk usage
+        growth.  Only the master node performs compaction.
+        """
+        TrackTask("COMPACTION")
+        try:
+            LOG.info("Periodic compaction thread started")
+            while self._epoch == launch_epoch:
+                # Only do the compaction if we are the master node.
+                if self.elector.master():
+                    LOG.info("I am master: doing periodic compaction")
+
+                    try:
+                        # Possibly request an etcd compaction.
+                        check_request_etcd_compaction()
+                    except Exception:
+                        LOG.exception("Error in periodic compaction thread")
+
+                    # Reschedule ourselves.
+                    eventlet.sleep(60 * cfg.CONF.calico.etcd_compaction_period_mins)
+                else:
+                    # Shorter sleep interval before we check if we've become the master.
+                    # Avoids waiting a whole etcd_compaction_period_mins if we just miss
+                    # the master update.
+                    LOG.debug("I am not master")
+                    eventlet.sleep(MASTER_CHECK_INTERVAL_SECS)
+        except Exception:
+            # TODO(nj) Should we tear down the process.
+            LOG.exception("Periodic compaction thread died!")
+            if self.elector:
+                # Stop the elector so that we give up the mastership.
+                self.elector.stop()
+            raise
+        else:
+            LOG.warning("Periodic compaction thread exiting.")
 
     @etcdv3.logging_exceptions
     def provide_felix_config(self):
@@ -1258,24 +1294,6 @@ class CalicoMechanismDriver(mech_agent.SimpleAgentMechanismDriverBase):
                     eventlet.sleep(1)
 
 
-# This section monkeypatches the AgentNotifierApi.security_groups_rule_updated
-# method to ensure that the Calico driver gets told about security group
-# updates at all times. This is a deeply unpleasant hack. Please, do as I say,
-# not as I do.
-#
-# For more info, please see issues #635 and #641.
-original_sgr_updated = rpc.AgentNotifierApi.security_groups_rule_updated
-
-
-def security_groups_rule_updated(self, context, sgids):
-    LOG.info("security_groups_rule_updated: %s %s" % (context, sgids))
-    mech_driver.send_sg_updates(sgids, context)
-    original_sgr_updated(self, context, sgids)
-
-
-rpc.AgentNotifierApi.security_groups_rule_updated = security_groups_rule_updated
-
-
 def port_status_change(port, original):
     """port_status_change
 
@@ -1351,10 +1369,6 @@ def check_request_etcd_compaction():
     We piggyback on the master election infrastructure so that only one thread
     of the Neutron server requests compaction, each time that it becomes due.
     """
-    # If periodic etcd compaction is disabled, do nothing here.
-    if cfg.CONF.calico.etcd_compaction_period_mins == 0:
-        return
-
     try:
         # Try to read the compaction trigger key.
         try:
